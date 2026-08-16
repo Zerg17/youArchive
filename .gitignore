@@ -1,0 +1,12 @@
+*
+!/**/
+!*.*
+
+.*
+data/*
+data
+__pycache__
+
+!.gitignore
+
+static/region_test.html

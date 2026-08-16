@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>Map Viewer</title>
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --panel: #111116;
+            --panel2: #16161d;
+            --accent: #3d8ef5;
+            --accent2: #1e5fa8;
+            --success: #2ecc6a;
+            --warn: #e8a22b;
+            --text: #d8d8e0;
+            --border: #252530;
+            --muted: #666677;
+            --input-bg: #1c1c24;
+            --input-border: #32323f;
+            --sidebar-w: 260px;
+            --topbar-h: 44px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .topbar {
+            height: var(--topbar-h);
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        .topbar-logo {
+            padding: 0 16px;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--accent);
+            border-right: 1px solid var(--border);
+            height: 100%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .topbar-tools {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            padding: 0 8px;
+            height: 100%;
+            border-right: 1px solid var(--border);
+        }
+        .tool-btn {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.1s, color 0.1s;
+            white-space: nowrap;
+        }
+        .tool-btn:hover { background: var(--panel2); color: var(--text); }
+        .tool-btn.active { background: rgba(61,142,245,0.15); color: var(--accent); }
+        .topbar-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 14px;
+            font-size: 11px;
+            color: var(--muted);
+            margin-left: auto;
+        }50%{opacity:0.4} }
+        .coord-display {
+            font-family: 'Cascadia Code','Consolas',monospace;
+            font-size: 11px;
+            color: var(--muted);
+            min-width: 120px;
+        }
+        .main { flex: 1; display: flex; overflow: hidden; }
+        .sidebar {
+            background: var(--panel);
+            border-right: 1px solid var(--border);
+            width: var(--sidebar-w);
+            min-width: var(--sidebar-w);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: width 0.2s ease, min-width 0.2s ease;
+            position: relative;
+            z-index: 5;
+        }
+        .sidebar.collapsed { width: 0; min-width: 0; border-right: none; }
+        .sidebar.collapsed .sidebar-inner { opacity: 0; pointer-events: none; }
+        .sidebar-toggle {
+            position: absolute;
+            right: -8px; top: 50%;
+            transform: translateY(-50%);
+            width: 8px; height: 36px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-left: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+            z-index: 20;
+            color: var(--muted);
+            font-size: 7px;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.1s, color 0.1s;
+        }
+        .sidebar-toggle:hover { background: var(--panel2); color: var(--text); }
+        .sidebar-inner {
+            flex: 1;
+            overflow-y: auto; overflow-x: hidden;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+            display: flex; flex-direction: column;
+            width: var(--sidebar-w); min-width: var(--sidebar-w);
+            padding: 10px; gap: 10px;
+            transition: opacity 0.15s;
+        }
+        .group {
+            display: flex; flex-direction: column; gap: 7px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .group:last-child { border-bottom: none; padding-bottom: 0; }
+        .group-label {
+            font-size: 10px; color: var(--muted);
+            text-transform: uppercase; font-weight: 700; letter-spacing: 1px;
+        }
+        .row { display: flex; align-items: center; gap: 8px; }
+        .row label { font-size: 12px; flex-shrink: 0; color: var(--text); }
+        .row .val { font-size: 12px; color: var(--muted); min-width: 32px; text-align: right; }
+        input[type="range"] { flex: 1; accent-color: var(--accent); height: 3px; }
+        input[type="number"], input[type="text"], select {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            color: var(--text);
+            padding: 5px 7px; border-radius: 4px; font-size: 12px; width: 100%;
+        }
+        input:focus, select:focus { outline: none; border-color: var(--accent); }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+            border: none; border-radius: 4px; cursor: pointer;
+            font-weight: 600; font-size: 12px; padding: 7px 12px;
+            transition: filter 0.1s, opacity 0.1s; white-space: nowrap;
+        }
+        .btn:hover { filter: brightness(1.2); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-ghost {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            color: var(--text);
+        }
+        .btn-ghost:hover { background: #252530; filter: none; }
+        .btn-full { width: 100%; }
+        .week-list {
+            display: flex; flex-direction: column; gap: 4px;
+            max-height: 200px; overflow-y: auto; scrollbar-width: thin;
+        }
+        .week-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 8px; border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--input-bg);
+            cursor: pointer; font-size: 12px; font-family: monospace;
+            transition: background 0.1s, border-color 0.1s;
+        }
+        .week-item:hover { background: #1f1f2a; border-color: var(--accent2); }
+        .week-item.active { background: rgba(61,142,245,0.12); border-color: var(--accent); color: var(--accent); }
+        .week-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+        .week-item.active .week-dot { background: var(--accent); }
+        .sel-info {
+            background: var(--input-bg); border: 1px solid var(--border);
+            border-radius: 4px; padding: 8px 10px;
+            font-size: 11px; font-family: monospace; line-height: 1.7; color: var(--muted);
+        }
+        .sel-info span { color: var(--text); }
+        /* background switcher */
+        .bg-switcher {
+            display: flex; gap: 4px;
+        }
+        .bg-btn {
+            flex: 1; padding: 5px 4px; border-radius: 4px; border: 1px solid var(--border);
+            background: var(--input-bg); color: var(--muted); cursor: pointer;
+            font-size: 11px; text-align: center; transition: all 0.1s;
+        }
+        .bg-btn:hover { border-color: var(--accent2); color: var(--text); }
+        .bg-btn.active { border-color: var(--accent); background: rgba(61,142,245,0.15); color: var(--accent); }
+        .canvas-area {
+            flex: 1; position: relative; overflow: hidden;
+        }
+        #mapCanvas { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+        #selectionCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        .zoom-controls {
+            position: absolute; bottom: 16px; right: 16px;
+            display: flex; flex-direction: column; gap: 4px; z-index: 10;
+        }
+        .zoom-btn {
+            width: 32px; height: 32px;
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: 5px; color: var(--text); cursor: pointer;
+            font-size: 16px; display: flex; align-items: center; justify-content: center;
+            transition: background 0.1s;
+        }
+        .zoom-btn:hover { background: var(--panel2); }
+        .zoom-level {
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: 5px; padding: 4px 0; text-align: center;
+            font-size: 11px; font-family: monospace; color: var(--muted);
+            cursor: pointer; user-select: none;
+        }
+        .zoom-level:hover { color: var(--text); }
+        .notif {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%) translateY(80px);
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 18px; font-size: 12px;
+            color: var(--text); z-index: 100;
+            transition: transform 0.25s ease, opacity 0.25s ease;
+            opacity: 0; pointer-events: none;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .notif.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .notif.success { border-color: var(--success); color: var(--success); }
+        .notif.error { border-color: #e05050; color: #e05050; }
+        .modal-backdrop {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.6); z-index: 50;
+            align-items: center; justify-content: center;
+        }
+        .modal-backdrop.open { display: flex; }
+        .modal {
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: 10px; padding: 24px 28px; min-width: 320px;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .modal h3 { font-size: 14px; font-weight: 700; color: var(--text); }
+        .progress-track { background: var(--input-bg); border-radius: 4px; height: 8px; overflow: hidden; }
+        .progress-fill {
+            height: 100%; background: var(--accent); width: 0%;
+            transition: width 0.2s ease; border-radius: 4px;
+            box-shadow: 0 0 8px var(--accent);
+        }
+        .modal-msg { font-size: 12px; color: var(--muted); font-family: monospace; }
+        .modal-actions { display: flex; justify-content: flex-end; }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-logo">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="1" width="5.5" height="5.5" rx="1" fill="#3d8ef5" opacity="0.9"/>
+            <rect x="7.5" y="1" width="5.5" height="5.5" rx="1" fill="#3d8ef5" opacity="0.5"/>
+            <rect x="1" y="7.5" width="5.5" height="5.5" rx="1" fill="#3d8ef5" opacity="0.5"/>
+            <rect x="7.5" y="7.5" width="5.5" height="5.5" rx="1" fill="#3d8ef5" opacity="0.3"/>
+        </svg>
+        MAP VIEWER
+    </div>
+    <div class="topbar-tools">
+        <button class="tool-btn active" id="btnToolPan" onclick="setTool('pan')" title="Перемещение (P)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 1a1 1 0 0 1 1 1v5h1V4a1 1 0 1 1 2 0v6a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a1 1 0 1 1 2 0v3h1V2a1 1 0 0 1 2 0v4h1V2a1 1 0 0 1 1-1z"/>
+            </svg>
+            Перемещение
+        </button>
+        <button class="tool-btn" id="btnToolSelect" onclick="setTool('select')" title="Выделение области (S)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="4" y="4" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 1.5"/>
+                <path d="M2 4h1M2 8h1M2 12h1M4 2v1M8 2v1M12 2v1M13 4h1M13 8h1M13 12h1M4 13v1M8 13v1M12 13v1" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+            </svg>
+            Выделение
+        </button>
+    </div>
+    <div class="topbar-status">
+        <div class="coord-display" id="coordDisplay">x: — y: —</div>
+    </div>
+</div>
+
+<div class="main">
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">▌</div>
+        <div class="sidebar-inner">
+
+            <div class="group">
+                <div class="group-label">Навигация</div>
+                <div class="row">
+                    <label>Масштаб</label>
+                    <input type="range" id="zoomSlider" min="-2" max="12" step="0.1" value="-2" oninput="setZoomFromSlider(this.value)">
+                    <div class="val" id="zoomVal">1/4096×</div>
+                </div>
+                <div class="row" style="gap:6px;">
+                    <input type="number" id="gotoX" placeholder="X тайл" style="flex:1;" min="0" max="4095">
+                    <input type="number" id="gotoY" placeholder="Y тайл" style="flex:1;" min="0" max="4095">
+                    <button class="btn btn-ghost" onclick="goToCoords()" style="padding:5px 10px;" title="Перейти к тайлу">→</button>
+                </div>
+            </div>
+
+            <div class="group">
+                <div class="group-label">Фон под тайлами</div>
+                <div class="bg-switcher">
+                    <div class="bg-btn active" id="bgBtnMap"    onclick="setBg('map')">🗺 Карта</div>
+                    <div class="bg-btn"         id="bgBtnLight"  onclick="setBg('light')">☀ Светлый</div>
+                    <div class="bg-btn"         id="bgBtnDark"   onclick="setBg('dark')">🌑 Тёмный</div>
+                </div>
+            </div>
+
+            <div class="group">
+                <div class="group-label">Архив по неделям</div>
+                <div class="week-list" id="weekList">
+                    <div class="week-item active" data-week="current" onclick="setActiveWeek('current')">
+                        <span>⟳ Текущая</span>
+                        <div class="week-dot"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="group">
+                <div class="group-label">Выделение и экспорт</div>
+                <div class="sel-info">
+                    X1: <span id="siX1">—</span> &nbsp; Y1: <span id="siY1">—</span><br>
+                    X2: <span id="siX2">—</span> &nbsp; Y2: <span id="siY2">—</span><br>
+                    Тайлов: <span id="siCount">—</span>
+                </div>
+                <button class="btn btn-primary btn-full" id="btnDownload" onclick="downloadLarge()" disabled>
+                    ↓ Скачать /large
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="canvas-area" id="canvasArea">
+        <canvas id="mapCanvas"></canvas>
+        <canvas id="selectionCanvas"></canvas>
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="stepZoom(1)">+</button>
+            <div class="zoom-level" id="zoomLevelDisplay" onclick="resetZoom()" title="Сбросить к 1×">1/4096×</div>
+            <button class="zoom-btn" onclick="stepZoom(-1)">−</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="dlModal">
+    <div class="modal">
+        <h3>Загрузка области...</h3>
+        <div class="progress-track"><div class="progress-fill" id="dlProgress"></div></div>
+        <div class="modal-msg" id="dlMsg">Подготовка запроса...</div>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" onclick="cancelDownload()">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script>
+'use strict';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MAP_SIZE  = 4096;
+const TILE_SIZE = 1024;   // pixels per tile at 1× zoom, native tile resolution
+const TILE_CONCURRENCY = 12;
+
+// ── Tile memory model ──────────────────────────────────────────────────────
+// Two-tier tile cache:
+//  - rawTileCache: compressed bytes as downloaded (Blob) or 'blank'. Cheap
+//    (tiles are ~1-100KB, rarely up to ~300KB), so this can hold many tiles
+//    and lets us switch weeks / re-zoom without re-hitting the network.
+//  - decodedTileCache: actual ImageBitmap pixels used for drawing. This is
+//    the expensive part (a naively-decoded 1024x1024 tile is 4MB of raw
+//    RGBA), so bitmaps are decoded at a resolution matching the current
+//    zoom (LOD bucket) instead of always at native size. Only ONE bitmap is
+//    kept per tile (not one per bucket) — when the zoom crosses into a new
+//    bucket, the existing bitmap keeps being drawn (just scaled) while the
+//    new-resolution one decodes in the background, and is swapped in only
+//    once ready. This avoids the "tile vanishes, then pops back in" flicker
+//    that a hard evict-then-redecode causes.
+const LOD_BUCKETS = [64, 128, 256, 512, TILE_SIZE]; // must stay <= TILE_SIZE
+function lodBucketFor(z) {
+    for (const b of LOD_BUCKETS) if (z <= b) return b;
+    return TILE_SIZE;
+}
+const RAW_CACHE_MAX_BYTES     = 300 * 1024 * 1024; // ~300MB of compressed tile bytes
+// Decoded bitmap size varies wildly with LOD bucket (64px tile = 16KB,
+// 1024px tile = 4MB) so the decoded cache is bounded by bytes, not by tile
+// count — a fixed tile-count cap would let memory balloon whenever the user
+// is zoomed in close (large buckets).
+const DECODED_CACHE_MAX_BYTES = 400 * 1024 * 1024; // ~400MB of decoded pixels
+// zoom unit: pixels per tile.
+//   zoom = 0.25   → whole map fits in ~1024px
+//   zoom = TILE_SIZE(1024) → 1× pixel-perfect
+const ZOOM_INITIAL = 0.25;
+const ZOOM_MIN     = 0.25;          // 1/4096× — full map view, no zooming out further
+const ZOOM_MAX     = TILE_SIZE * 4; // 4×
+
+// /map pixel colors that mean "no tile data" — skip fetching.
+const SKIP_GRAY  = [128, 128, 128]; // UNLOADED
+const SKIP_BLACK = [0,   0,   0  ]; // EMPTY (only on live map; archive strips these)
+
+// Tile-mode backdrop colors
+const BG_COLORS = { map: null, light: '#f0ede8', dark: '#111116' };
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let activeWeek   = null;
+let viewX        = MAP_SIZE / 2;
+let viewY        = MAP_SIZE / 2;
+let zoom         = ZOOM_INITIAL;   // px/tile
+let activeTool   = 'pan';
+let activeBg     = 'map';          // 'map' | 'light' | 'dark'
+
+let isPanning = false, panStartX=0, panStartY=0, panStartVX=0, panStartVY=0;
+let isSelecting = false;
+let selStart = null, selEnd = null, selection = null;
+
+// Raw (compressed) tile bytes. key: `${week}:${tx}:${ty}` -> Blob | 'blank'
+const rawTileCache  = new Map();
+const rawTileLoading = new Set();
+const rawLastUsed   = new Map();
+let rawCacheBytes   = 0;
+
+// Decoded tile bitmaps. key: `${week}:${tx}:${ty}` -> { bmp, bucket }
+// (one bitmap per tile — see LOD note above)
+const decodedTileCache    = new Map();
+const decodedTileDecoding = new Map(); // rKey -> bucket currently being decoded
+const decodedLastUsed     = new Map();
+let decodedCacheBytes = 0;
+
+let activeTileLoads = 0;
+let visibleRawKeys = new Set();
+let visibleDecodedKeys = new Set();
+let frameCounter = 0;
+
+// /map overlay image
+let mapImage = null, mapImageWeek = null, mapImageLoading = false;
+// Off-screen 4096×4096 canvas for O(1) pixel colour sampling.
+let mapSampleCtx = null;
+
+// Cache of /map images per week (weekKey -> {img, sampleCtx}) so that
+// switching between weeks — e.g. to quickly compare two weeks — is instant
+// and doesn't re-download or flicker. Tiles are already cached per-week via
+// rawKey(); this does the same for the low-zoom overview/backdrop image.
+const MAP_IMAGE_CACHE_LIMIT = 16;
+const mapImageCache = new Map();
+const mapImageLoadingKeys = new Set();
+
+let dlAbort = null;
+let renderPending = false;
+
+// ─── Canvas setup ─────────────────────────────────────────────────────────────
+const canvasArea = document.getElementById('canvasArea');
+const mapCanvas  = document.getElementById('mapCanvas');
+const selCanvas  = document.getElementById('selectionCanvas');
+const mapCtx     = mapCanvas.getContext('2d');
+const selCtx     = selCanvas.getContext('2d');
+
+function resizeCanvases() {
+    const w = canvasArea.clientWidth, h = canvasArea.clientHeight;
+    mapCanvas.width = w; mapCanvas.height = h;
+    selCanvas.width = w; selCanvas.height = h;
+    scheduleRender();
+}
+window.addEventListener('resize', resizeCanvases);
+
+// ─── Coordinate helpers ───────────────────────────────────────────────────────
+function worldToCanvas(wx, wy) {
+    return [
+        mapCanvas.width  / 2 + (wx - viewX) * zoom,
+        mapCanvas.height / 2 + (wy - viewY) * zoom,
+    ];
+}
+function canvasToWorld(cx, cy) {
+    return [
+        viewX + (cx - mapCanvas.width  / 2) / zoom,
+        viewY + (cy - mapCanvas.height / 2) / zoom,
+    ];
+}
+
+function scheduleRender() {
+    if (!renderPending) {
+        renderPending = true;
+        requestAnimationFrame(() => { renderPending = false; render(); });
+    }
+}
+
+// ─── Main render ──────────────────────────────────────────────────────────────
+// Switch to tile mode once each tile is at least this many pixels wide.
+const TILE_SWITCH_THRESHOLD = 64;
+
+function render() {
+    const W = mapCanvas.width, H = mapCanvas.height;
+    mapCtx.fillStyle = '#0a0a0c';
+    mapCtx.fillRect(0, 0, W, H);
+    selCtx.clearRect(0, 0, W, H);
+
+    const weekKey = activeWeek || 'current';
+
+    if (zoom < TILE_SWITCH_THRESHOLD) {
+        // ── Overview: draw /map image scaled to canvas ──
+        if (mapImage && mapImageWeek === weekKey) {
+            const [bx, by] = worldToCanvas(0, 0);
+            mapCtx.imageSmoothingEnabled = false;
+            mapCtx.drawImage(mapImage, bx, by, MAP_SIZE * zoom, MAP_SIZE * zoom);
+        } else if (!mapImageLoading) {
+            loadMapImage(weekKey);
+        }
+    } else {
+        // ── Tile mode ──
+        // 1. Background layer
+        if (activeBg === 'map' && mapImage && mapImageWeek === weekKey) {
+            // Draw /map as pixelated backdrop behind the tiles
+            const [bx, by] = worldToCanvas(0, 0);
+            mapCtx.imageSmoothingEnabled = false;
+            mapCtx.drawImage(mapImage, bx, by, MAP_SIZE * zoom, MAP_SIZE * zoom);
+        } else if (activeBg !== 'map') {
+            // Solid colour backdrop covering the tile-map area
+            const [bx, by] = worldToCanvas(0, 0);
+            mapCtx.fillStyle = BG_COLORS[activeBg];
+            mapCtx.fillRect(bx, by, MAP_SIZE * zoom, MAP_SIZE * zoom);
+        }
+
+        // Ensure /map is loaded (needed for pixel sampling even in non-map-bg mode)
+        if (!mapImage || mapImageWeek !== weekKey) {
+            if (!mapImageLoading) loadMapImage(weekKey);
+        }
+
+        // 2. Tile layer
+        renderTileMode();
+    }
+
+    // Map border
+    const [bx, by] = worldToCanvas(0, 0);
+    mapCtx.strokeStyle = 'rgba(61,142,245,0.3)';
+    mapCtx.lineWidth = 1;
+    mapCtx.strokeRect(bx + 0.5, by + 0.5, MAP_SIZE * zoom - 1, MAP_SIZE * zoom - 1);
+
+    renderSelection();
+}
+
+// ─── /map image loading ───────────────────────────────────────────────────────
+// opts.force=true bypasses the cache and re-fetches (used for the live
+// auto-refresh, since the live week's map can change over time).
+function loadMapImage(weekKey, opts = {}) {
+    const forceRefresh = opts.force === true;
+
+    if (!forceRefresh && mapImageCache.has(weekKey)) {
+        applyMapImage(weekKey, mapImageCache.get(weekKey));
+        return;
+    }
+    if (mapImageLoadingKeys.has(weekKey)) return;
+    mapImageLoadingKeys.add(weekKey);
+    if (weekKey === (activeWeek || 'current')) mapImageLoading = true;
+
+    // Cache-busting is only needed for the forced live-refresh of the
+    // current week (refreshLiveMap) — that's the one case where the same
+    // URL must return newer bytes than what a cache might be holding.
+    // Archive weeks are immutable and normal (non-forced) loads of
+    // 'current' are already covered by the server's short max-age, so
+    // appending _t there would just defeat the browser's HTTP cache for
+    // no reason — e.g. re-downloading an already-seen archive week's /map
+    // image instead of serving it instantly from disk cache.
+    const url = (weekKey === 'current' ? '/map' : '/map/' + encodeURIComponent(weekKey))
+                + (forceRefresh ? '?_t=' + Date.now() : '');
+    const img = new Image();
+    img.onload = () => {
+        const entry = { img, sampleCtx: buildSampleCanvas(img) };
+        mapImageCache.set(weekKey, entry);
+        evictMapImageCache(weekKey);
+        mapImageLoadingKeys.delete(weekKey);
+        if (weekKey === (activeWeek || 'current')) {
+            mapImageLoading = false;
+            applyMapImage(weekKey, entry);
+        }
+    };
+    img.onerror = () => {
+        mapImageLoadingKeys.delete(weekKey);
+        if (weekKey === (activeWeek || 'current')) mapImageLoading = false;
+        scheduleRender();
+    };
+    img.src = url;
+}
+
+function applyMapImage(weekKey, entry) {
+    mapImage     = entry.img;
+    mapImageWeek = weekKey;
+    mapSampleCtx = entry.sampleCtx;
+    scheduleRender();
+}
+
+function evictMapImageCache(justAdded) {
+    if (mapImageCache.size <= MAP_IMAGE_CACHE_LIMIT) return;
+    const keep = new Set([justAdded, activeWeek || 'current']);
+    for (const k of mapImageCache.keys()) {
+        if (mapImageCache.size <= MAP_IMAGE_CACHE_LIMIT) break;
+        if (keep.has(k)) continue;
+        mapImageCache.delete(k);
+    }
+}
+
+// ─── Map pixel sampling ───────────────────────────────────────────────────────
+function buildSampleCanvas(img) {
+    const c = document.createElement('canvas');
+    c.width = MAP_SIZE; c.height = MAP_SIZE;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, MAP_SIZE, MAP_SIZE);
+    return ctx;
+}
+
+function tileIsSkippable(tx, ty) {
+    if (!mapSampleCtx) return false;
+    try {
+        const d = mapSampleCtx.getImageData(tx, ty, 1, 1).data;
+        if (d[0]===128 && d[1]===128 && d[2]===128) return true; // UNLOADED gray
+        if (d[0]===0   && d[1]===0   && d[2]===0  ) return true; // EMPTY black
+    } catch(e) {}
+    return false;
+}
+
+// ─── Tile rendering ───────────────────────────────────────────────────────────
+function renderTileMode() {
+    const W = mapCanvas.width, H = mapCanvas.height;
+    const [wx0, wy0] = canvasToWorld(0, 0);
+    const [wx1, wy1] = canvasToWorld(W, H);
+    const tx0 = Math.max(0, Math.floor(wx0));
+    const ty0 = Math.max(0, Math.floor(wy0));
+    const tx1 = Math.min(MAP_SIZE - 1, Math.ceil(wx1));
+    const ty1 = Math.min(MAP_SIZE - 1, Math.ceil(wy1));
+
+    // The /map image for the currently active week is what tells us which
+    // tiles actually exist (gray = unloaded, black = empty). Right after
+    // switching weeks that image hasn't arrived yet (it's an async fetch),
+    // so mapSampleCtx may still belong to the *previous* week or be absent
+    // entirely. Fetching tiles blindly in that window is what caused a
+    // burst of requests for tiles the archive week doesn't have. Instead,
+    // wait — loadMapImage's onload already calls scheduleRender() once the
+    // right week's map arrives, so we'll simply re-evaluate then.
+    const weekKey = activeWeek || 'current';
+    const mapReadyForThisWeek = !!mapSampleCtx && mapImageWeek === weekKey;
+
+    frameCounter++;
+    visibleRawKeys = new Set();
+    visibleDecodedKeys = new Set();
+    const bucket = lodBucketFor(zoom);
+
+    for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+            const rKey = rawKey(tx, ty);
+            visibleRawKeys.add(rKey);
+            const raw = rawTileCache.get(rKey);
+            const [cx, cy] = worldToCanvas(tx, ty);
+
+            if (raw === 'blank') {
+                rawLastUsed.set(rKey, frameCounter);
+            } else if (raw instanceof Blob) {
+                rawLastUsed.set(rKey, frameCounter);
+                visibleDecodedKeys.add(rKey);
+                const entry = decodedTileCache.get(rKey);
+                if (entry) {
+                    // Draw whatever resolution we already have — drawImage
+                    // scales to (zoom, zoom) regardless of the bitmap's own
+                    // size, so this looks correct even if it's not the
+                    // "right" bucket yet, just possibly a bit soft/blocky.
+                    decodedLastUsed.set(rKey, frameCounter);
+                    mapCtx.imageSmoothingEnabled = false;
+                    mapCtx.drawImage(entry.bmp, cx, cy, zoom, zoom);
+                    if (entry.bucket !== bucket) {
+                        decodeTileIfNeeded(raw, rKey, bucket); // upgrade/downgrade in background
+                    }
+                } else {
+                    decodeTileIfNeeded(raw, rKey, bucket);
+                }
+            } else if (!raw && mapReadyForThisWeek) {
+                if (tileIsSkippable(tx, ty)) {
+                    rawCacheSet(rKey, 'blank');
+                    rawLastUsed.set(rKey, frameCounter);
+                } else {
+                    loadTileIfNeeded(tx, ty, rKey);
+                }
+            }
+            // !raw && !mapReadyForThisWeek: nothing to draw yet, and we
+            // deliberately don't fetch until we know whether the tile exists.
+        }
+    }
+}
+
+function rawKey(tx, ty) {
+    return `${activeWeek || 'current'}:${tx}:${ty}`;
+}
+
+// ─── Raw (compressed) tile cache helpers ───────────────────────────────────
+function rawCacheSet(key, value) {
+    const prev = rawTileCache.get(key);
+    if (prev instanceof Blob) rawCacheBytes -= prev.size;
+    rawTileCache.set(key, value);
+    if (value instanceof Blob) rawCacheBytes += value.size;
+}
+function rawCacheDelete(key) {
+    const prev = rawTileCache.get(key);
+    if (prev instanceof Blob) rawCacheBytes -= prev.size;
+    rawTileCache.delete(key);
+    rawLastUsed.delete(key);
+}
+
+function loadTileIfNeeded(tx, ty, rKey) {
+    if (rawTileLoading.has(rKey) || activeTileLoads >= TILE_CONCURRENCY) return;
+    rawTileLoading.add(rKey);
+    activeTileLoads++;
+
+    const url = activeWeek
+        ? `/tile/${tx}/${ty}/${encodeURIComponent(activeWeek)}`
+        : `/tile/${tx}/${ty}`;
+
+    fetch(url)
+        .then(r => {
+            if (r.status === 204) { rawCacheSet(rKey, 'blank'); return null; }
+            if (!r.ok) throw new Error(r.status);
+            return r.blob();
+        })
+        .then(blob => {
+            if (!blob) return;
+            if (blob.size < 200) { rawCacheSet(rKey, 'blank'); return; }
+            rawCacheSet(rKey, blob);
+        })
+        .catch(() => rawCacheSet(rKey, 'blank'))
+        .finally(() => {
+            rawTileLoading.delete(rKey);
+            activeTileLoads--;
+            evictRawTiles();
+            scheduleRender();
+        });
+}
+
+function evictRawTiles() {
+    if (rawCacheBytes <= RAW_CACHE_MAX_BYTES) return;
+    const candidates = [...rawTileCache.keys()]
+        .filter(k => !visibleRawKeys.has(k) && !rawTileLoading.has(k))
+        .sort((a, b) => (rawLastUsed.get(a) || 0) - (rawLastUsed.get(b) || 0));
+    for (const k of candidates) {
+        if (rawCacheBytes <= RAW_CACHE_MAX_BYTES) break;
+        rawCacheDelete(k);
+    }
+}
+
+// ─── Decoded tile bitmap cache helpers ─────────────────────────────────────
+// Decodes at a resolution matching the current zoom (LOD bucket) rather than
+// always at native 1024x1024 — a tile shown at 64px on screen only needs a
+// 64x64 bitmap, not a 4MB full-res one. resizeQuality:'pixelated' keeps this
+// a crisp nearest-neighbour downsample, so pixel art doesn't blur.
+//
+// Only one bitmap is kept per tile. When the wanted bucket changes, the old
+// bitmap is left in place (and still drawn) until the new one finishes
+// decoding, then swapped — no gap where nothing is drawn.
+function decodeTileIfNeeded(blob, rKey, bucket) {
+    if (decodedTileDecoding.get(rKey) === bucket) return; // already decoding this exact target
+    decodedTileDecoding.set(rKey, bucket);
+
+    createImageBitmap(blob, {
+        resizeWidth: bucket,
+        resizeHeight: bucket,
+        resizeQuality: 'pixelated',
+    })
+        .then(bmp => decodedCacheSet(rKey, bmp, bucket))
+        .catch(() => {})
+        .finally(() => {
+            if (decodedTileDecoding.get(rKey) === bucket) decodedTileDecoding.delete(rKey);
+            evictDecodedTiles();
+            scheduleRender();
+        });
+}
+
+function decodedBitmapBytes(bucket) {
+    return bucket * bucket * 4; // RGBA
+}
+
+function decodedCacheSet(rKey, bmp, bucket) {
+    const old = decodedTileCache.get(rKey);
+    if (old) {
+        decodedCacheBytes -= decodedBitmapBytes(old.bucket);
+        old.bmp.close();
+    }
+    decodedTileCache.set(rKey, { bmp, bucket });
+    decodedCacheBytes += decodedBitmapBytes(bucket);
+    decodedLastUsed.set(rKey, frameCounter);
+}
+
+function decodedCacheDelete(rKey) {
+    const old = decodedTileCache.get(rKey);
+    if (old) {
+        decodedCacheBytes -= decodedBitmapBytes(old.bucket);
+        old.bmp.close();
+    }
+    decodedTileCache.delete(rKey);
+    decodedLastUsed.delete(rKey);
+}
+
+function evictDecodedTiles() {
+    if (decodedCacheBytes <= DECODED_CACHE_MAX_BYTES) return;
+    const candidates = [...decodedTileCache.keys()]
+        .filter(k => !visibleDecodedKeys.has(k))
+        .sort((a, b) => (decodedLastUsed.get(a) || 0) - (decodedLastUsed.get(b) || 0));
+    for (const k of candidates) {
+        if (decodedCacheBytes <= DECODED_CACHE_MAX_BYTES) break;
+        decodedCacheDelete(k);
+    }
+}
+
+// ─── Selection rendering ──────────────────────────────────────────────────────
+function renderSelection() {
+    if (!selStart) return;
+    const end = selEnd || selStart;
+    const tx1 = Math.min(selStart.tx, end.tx), ty1 = Math.min(selStart.ty, end.ty);
+    const tx2 = Math.max(selStart.tx, end.tx), ty2 = Math.max(selStart.ty, end.ty);
+    const [cx1, cy1] = worldToCanvas(tx1, ty1);
+    const [cx2, cy2] = worldToCanvas(tx2 + 1, ty2 + 1);
+    selCtx.save();
+    selCtx.fillStyle = 'rgba(61,142,245,0.1)';
+    selCtx.fillRect(cx1, cy1, cx2 - cx1, cy2 - cy1);
+    selCtx.strokeStyle = '#3d8ef5';
+    selCtx.lineWidth = 1.5;
+    selCtx.setLineDash([5, 3]);
+    selCtx.strokeRect(cx1 + 0.5, cy1 + 0.5, cx2 - cx1 - 1, cy2 - cy1 - 1);
+    selCtx.setLineDash([]);
+    for (const [hx, hy] of [[cx1,cy1],[cx2,cy1],[cx1,cy2],[cx2,cy2]]) {
+        selCtx.fillStyle = '#3d8ef5';
+        selCtx.fillRect(hx - 3, hy - 3, 6, 6);
+    }
+    const count = (tx2 - tx1 + 1) * (ty2 - ty1 + 1);
+    if (cx2 - cx1 > 40 && cy2 - cy1 > 20) {
+        const mx = (cx1 + cx2) / 2, my = (cy1 + cy2) / 2;
+        selCtx.font = '11px monospace';
+        selCtx.textAlign = 'center'; selCtx.textBaseline = 'middle';
+        selCtx.fillStyle = 'rgba(0,0,0,0.6)';
+        selCtx.fillText(count + 'т', mx + 1, my + 1);
+        selCtx.fillStyle = '#fff';
+        selCtx.fillText(count + 'т', mx, my);
+    }
+    selCtx.restore();
+}
+
+// ─── Mouse / touch events ─────────────────────────────────────────────────────
+// ─── Hidden: Ctrl+Click requests tile scan via POST /scan/{x}/{y} ─────────────
+// Secret feature — no UI hints. Rate-limited to 1 request / minute per user.
+// No manual refresh here anymore — the periodic live-map refresh (below)
+// picks up newly downloaded tiles automatically, so there's no separate
+// one-off reload tied to this click.
+let lastScanRequestAt = 0;
+const SCAN_RATE_LIMIT_MS = 60_000;  // silently ignore attempts more frequent than this
+
+mapCanvas.addEventListener('click', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Hidden anti-spam: silently ignore if user clicked within the last minute.
+    const now = Date.now();
+    if (now - lastScanRequestAt < SCAN_RATE_LIMIT_MS) return;
+
+    const r = mapCanvas.getBoundingClientRect();
+    const [wx, wy] = canvasToWorld(e.clientX - r.left, e.clientY - r.top);
+    const tx = Math.floor(wx), ty = Math.floor(wy);
+    if (tx < 0 || tx >= MAP_SIZE || ty < 0 || ty >= MAP_SIZE) return;
+
+    // Reserve the slot BEFORE the network round-trip so concurrent clicks
+    // inside the same minute are also silently dropped.
+    lastScanRequestAt = now;
+
+    fetch(`/scan/${tx}/${ty}`, { method: 'POST' })
+        .catch(() => { /* silent — hidden feature, no error UI */ });
+});
+
+mapCanvas.addEventListener('mousedown', e => {
+    // Hidden Ctrl+Click handler above takes over for left-button clicks with Ctrl.
+    // Skip pan/select setup so the click doesn't start a drag.
+    if (e.ctrlKey && e.button === 0) return;
+    if (activeTool === 'pan' || e.button === 1 || e.button === 2) {
+        isPanning = true;
+        panStartX = e.clientX; panStartY = e.clientY;
+        panStartVX = viewX; panStartVY = viewY;
+        mapCanvas.style.cursor = 'grabbing';
+    } else if (activeTool === 'select' && e.button === 0) {
+        const r = mapCanvas.getBoundingClientRect();
+        const [wx, wy] = canvasToWorld(e.clientX - r.left, e.clientY - r.top);
+        const tx = Math.floor(wx), ty = Math.floor(wy);
+        if (tx >= 0 && tx < MAP_SIZE && ty >= 0 && ty < MAP_SIZE) {
+            isSelecting = true;
+            selStart = { tx, ty }; selEnd = { tx, ty };
+            updateSelInfo();
+        }
+    }
+});
+
+mapCanvas.addEventListener('mousemove', e => {
+    const r  = mapCanvas.getBoundingClientRect();
+    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    const [wx, wy] = canvasToWorld(cx, cy);
+    const tx = Math.floor(wx), ty = Math.floor(wy);
+    document.getElementById('coordDisplay').textContent =
+        (tx >= 0 && tx < MAP_SIZE && ty >= 0 && ty < MAP_SIZE) ? `x:${tx}  y:${ty}` : 'x:—  y:—';
+
+    if (isPanning) {
+        viewX = panStartVX - (e.clientX - panStartX) / zoom;
+        viewY = panStartVY - (e.clientY - panStartY) / zoom;
+        clampView(); scheduleRender();
+    } else if (isSelecting) {
+        selEnd = {
+            tx: Math.max(0, Math.min(MAP_SIZE - 1, tx)),
+            ty: Math.max(0, Math.min(MAP_SIZE - 1, ty)),
+        };
+        updateSelInfo(); scheduleRender();
+    }
+});
+
+mapCanvas.addEventListener('mouseup', e => {
+    if (isPanning) { isPanning = false; mapCanvas.style.cursor = activeTool === 'pan' ? 'grab' : 'crosshair'; }
+    if (isSelecting) {
+        isSelecting = false;
+        if (selStart && selEnd) {
+            selection = {
+                x1: Math.min(selStart.tx, selEnd.tx), y1: Math.min(selStart.ty, selEnd.ty),
+                x2: Math.max(selStart.tx, selEnd.tx), y2: Math.max(selStart.ty, selEnd.ty),
+            };
+            document.getElementById('btnDownload').disabled = false;
+        }
+        scheduleRender();
+    }
+});
+
+mapCanvas.addEventListener('mouseleave', () => {
+    if (isPanning)   { isPanning   = false; mapCanvas.style.cursor = activeTool === 'pan' ? 'grab' : 'crosshair'; }
+    if (isSelecting) { isSelecting = false; scheduleRender(); }
+});
+
+mapCanvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r  = mapCanvas.getBoundingClientRect();
+    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    setZoom(snapZoom(zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2)), cx, cy);
+}, { passive: false });
+
+mapCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Double-click a spot to copy a youplace.live share link for that exact pixel.
+mapCanvas.addEventListener('dblclick', e => {
+    e.preventDefault();
+    const r = mapCanvas.getBoundingClientRect();
+    const [wx, wy] = canvasToWorld(e.clientX - r.left, e.clientY - r.top);
+    const tx = Math.floor(wx), ty = Math.floor(wy);
+    if (tx < 0 || tx >= MAP_SIZE || ty < 0 || ty >= MAP_SIZE) return;
+
+    // Pixel position within the tile (0-1023), same scale as TILE_SIZE.
+    const px = Math.max(0, Math.min(TILE_SIZE - 1, Math.floor((wx - tx) * TILE_SIZE)));
+    const py = Math.max(0, Math.min(TILE_SIZE - 1, Math.floor((wy - ty) * TILE_SIZE)));
+
+    const url = `https://youplace.live/?pixel=${tx},${ty},${px},${py}`;
+    navigator.clipboard.writeText(url)
+        .then(() => showNotif('Ссылка скопирована: ' + url, 'success'))
+        .catch(() => showNotif('Не удалось скопировать ссылку', 'error'));
+});
+
+let lastTouchDist = 0;
+mapCanvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+        const t = e.touches[0];
+        isPanning = true;
+        panStartX = t.clientX; panStartY = t.clientY;
+        panStartVX = viewX;    panStartVY = viewY;
+    } else if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        lastTouchDist = Math.sqrt(dx*dx + dy*dy);
+    }
+    e.preventDefault();
+}, { passive: false });
+
+mapCanvas.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && isPanning) {
+        const t = e.touches[0];
+        viewX = panStartVX - (t.clientX - panStartX) / zoom;
+        viewY = panStartVY - (t.clientY - panStartY) / zoom;
+        clampView(); scheduleRender();
+    } else if (e.touches.length === 2) {
+        const dx   = e.touches[0].clientX - e.touches[1].clientX;
+        const dy   = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const r    = mapCanvas.getBoundingClientRect();
+        const mx   = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left;
+        const my   = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top;
+        if (lastTouchDist) setZoom(snapZoom(zoom * dist / lastTouchDist), mx, my);
+        lastTouchDist = dist;
+    }
+    e.preventDefault();
+}, { passive: false });
+
+mapCanvas.addEventListener('touchend', () => { isPanning = false; });
+
+document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'p' || e.key === 'P') setTool('pan');
+    if (e.key === 's' || e.key === 'S') setTool('select');
+    if (e.key === 'Escape') clearSelection();
+    if (e.key === '+' || e.key === '=') stepZoom(1);
+    if (e.key === '-') stepZoom(-1);
+    if (e.key === '0') resetZoom();
+    if (e.key === 'ArrowUp')   { e.preventDefault(); stepWeek(-1); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); stepWeek(1); }
+});
+
+// ─── Zoom ─────────────────────────────────────────────────────────────────────
+const ZOOM_STEPS = [
+    0.25,                          // minimum — full map view
+    0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
+    TILE_SIZE,                     // 1× pixel-perfect
+    TILE_SIZE * 2,                 // 2×
+    TILE_SIZE * 4,                 // 4×
+];
+
+function snapZoom(z) {
+    const SNAP = 0.15;
+    for (const s of ZOOM_STEPS) {
+        if (Math.abs(z - s) / s < SNAP) return s;
+    }
+    return z;
+}
+
+function setZoom(nz, pivotCX, pivotCY) {
+    nz = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, nz));
+    if (pivotCX !== undefined) {
+        const [wx, wy] = canvasToWorld(pivotCX, pivotCY);
+        zoom = nz;
+        viewX = wx - (pivotCX - mapCanvas.width  / 2) / zoom;
+        viewY = wy - (pivotCY - mapCanvas.height / 2) / zoom;
+    } else {
+        zoom = nz;
+    }
+    clampView();
+    updateZoomUI();
+    scheduleRender();
+}
+
+function stepZoom(dir) {
+    let idx = ZOOM_STEPS.findIndex(s => s >= zoom);
+    if (idx === -1) idx = ZOOM_STEPS.length - 1;
+    if (dir > 0) idx = Math.min(ZOOM_STEPS.length - 1, idx + 1);
+    else {
+        if (ZOOM_STEPS[idx] <= zoom && idx > 0) idx--;
+        else idx = Math.max(0, idx - 1);
+    }
+    setZoom(ZOOM_STEPS[idx]);
+}
+
+function resetZoom() { setZoom(TILE_SIZE); }
+
+function setZoomFromSlider(val) { setZoom(Math.pow(2, parseFloat(val))); }
+
+function updateZoomUI() {
+    const wz = zoom / TILE_SIZE;
+    const label = wz >= 1 ? Math.round(wz) + '×' : '1/' + Math.round(1 / wz) + '×';
+    document.getElementById('zoomLevelDisplay').textContent = label;
+    document.getElementById('zoomVal').textContent = label;
+    document.getElementById('zoomSlider').value = Math.log2(zoom);
+}
+
+function clampView() {
+    const m = 200 / zoom;
+    viewX = Math.max(-m, Math.min(MAP_SIZE + m, viewX));
+    viewY = Math.max(-m, Math.min(MAP_SIZE + m, viewY));
+}
+
+// ─── Tools ────────────────────────────────────────────────────────────────────
+function setTool(tool) {
+    activeTool = tool;
+    document.getElementById('btnToolPan').classList.toggle('active',    tool === 'pan');
+    document.getElementById('btnToolSelect').classList.toggle('active', tool === 'select');
+    mapCanvas.style.cursor = tool === 'pan' ? 'grab' : 'crosshair';
+    if (tool !== 'select' && selStart) clearSelection();
+}
+
+function setBg(bg) {
+    activeBg = bg;
+    document.getElementById('bgBtnMap').classList.toggle('active',   bg === 'map');
+    document.getElementById('bgBtnLight').classList.toggle('active', bg === 'light');
+    document.getElementById('bgBtnDark').classList.toggle('active',  bg === 'dark');
+    scheduleRender();
+}
+
+function goToCoords() {
+    const x = parseInt(document.getElementById('gotoX').value);
+    const y = parseInt(document.getElementById('gotoY').value);
+    if (!isNaN(x) && !isNaN(y)) {
+        viewX = Math.max(0, Math.min(MAP_SIZE, x + 0.5));
+        viewY = Math.max(0, Math.min(MAP_SIZE, y + 0.5));
+        scheduleRender();
+    }
+}
+
+// Pasting "3505, 1602" (e.g. copied from another site) into the X field
+// used to dump the whole string in as one number. If the pasted text looks
+// like "X, Y", split it across both fields and jump straight there.
+document.getElementById('gotoX').addEventListener('paste', e => {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    const m = text.match(/^\s*(-?\d+)\s*[,;\s]\s*(-?\d+)\s*$/);
+    if (!m) return;
+    e.preventDefault();
+    document.getElementById('gotoX').value = m[1];
+    document.getElementById('gotoY').value = m[2];
+    goToCoords();
+});
+
+// ─── Selection ────────────────────────────────────────────────────────────────
+function updateSelInfo() {
+    if (!selStart) return;
+    const e = selEnd || selStart;
+    const tx1 = Math.min(selStart.tx, e.tx), ty1 = Math.min(selStart.ty, e.ty);
+    const tx2 = Math.max(selStart.tx, e.tx), ty2 = Math.max(selStart.ty, e.ty);
+    const count = (tx2 - tx1 + 1) * (ty2 - ty1 + 1);
+    document.getElementById('siX1').textContent = tx1;
+    document.getElementById('siY1').textContent = ty1;
+    document.getElementById('siX2').textContent = tx2;
+    document.getElementById('siY2').textContent = ty2;
+    document.getElementById('siCount').textContent = count + (count > 128 ? ' ⚠' : '');
+}
+
+function clearSelection() {
+    selStart = selEnd = selection = null;
+    document.getElementById('btnDownload').disabled = true;
+    ['siX1','siY1','siX2','siY2','siCount'].forEach(id =>
+        document.getElementById(id).textContent = '—');
+    scheduleRender();
+}
+
+// ─── Download ─────────────────────────────────────────────────────────────────
+function downloadLarge() {
+    if (!selection) return;
+    const { x1, y1, x2, y2 } = selection;
+    const count = (x2 - x1 + 1) * (y2 - y1 + 1);
+    if (count > 128) { showNotif('Слишком большая область (макс 128 тайлов)', 'error'); return; }
+
+    document.getElementById('dlModal').classList.add('open');
+    document.getElementById('dlProgress').style.width = '20%';
+    document.getElementById('dlMsg').textContent = `Загрузка ${count} тайл(ов)...`;
+
+    let url = `/region/${x1}/${y1}/${x2}/${y2}`;
+    if (activeWeek) url += `?week=${encodeURIComponent(activeWeek)}`;
+
+    const ctrl = new AbortController();
+    dlAbort = ctrl;
+
+    let prog = 20;
+    const iv = setInterval(() => {
+        prog = Math.min(88, prog + Math.random() * 4);
+        document.getElementById('dlProgress').style.width = prog + '%';
+    }, 500);
+
+    fetch(url, { signal: ctrl.signal })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+        .then(blob => {
+            clearInterval(iv);
+            document.getElementById('dlProgress').style.width = '100%';
+            document.getElementById('dlMsg').textContent = 'Сохранение файла...';
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `map_${x1}-${y1}_${x2}-${y2}${activeWeek ? '_' + activeWeek : ''}.png`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+            setTimeout(() => {
+                document.getElementById('dlModal').classList.remove('open');
+                showNotif('Сохранено: ' + a.download, 'success');
+            }, 600);
+        })
+        .catch(err => {
+            clearInterval(iv);
+            if (err.name !== 'AbortError') {
+                document.getElementById('dlMsg').textContent = 'Ошибка: ' + err.message;
+                showNotif('Ошибка загрузки', 'error');
+            }
+        });
+}
+
+function cancelDownload() {
+    if (dlAbort) { dlAbort.abort(); dlAbort = null; }
+    document.getElementById('dlModal').classList.remove('open');
+}
+
+// ─── Live map auto-refresh ─────────────────────────────────────────────────────
+// The live (current) week's data keeps growing as tiles get downloaded.
+// Every minute — but only while this tab is actually visible, so we don't
+// hammer the server from background tabs — refetch /map and drop any cached
+// "no tile here" markers for the current week so newly-available tiles get
+// picked up and drawn. Archive weeks are immutable, so they're never
+// auto-refreshed.
+const LIVE_REFRESH_INTERVAL_MS = 60_000;
+let liveRefreshTimer = null;
+
+function refreshLiveMap() {
+    if (activeWeek) return; // archive weeks don't change, nothing to refresh
+    // Loaded tiles stay valid; only forget "confirmed absent" markers so
+    // renderTileMode() re-checks them against the freshly fetched /map.
+    for (const key of rawTileCache.keys()) {
+        if (key.startsWith('current:') && rawTileCache.get(key) === 'blank') {
+            rawCacheDelete(key);
+        }
+    }
+    loadMapImage('current', { force: true });
+}
+
+function startLiveRefreshTimer() {
+    if (liveRefreshTimer) return;
+    liveRefreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        refreshLiveMap();
+    }, LIVE_REFRESH_INTERVAL_MS);
+}
+
+function stopLiveRefreshTimer() {
+    if (liveRefreshTimer) { clearInterval(liveRefreshTimer); liveRefreshTimer = null; }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        stopLiveRefreshTimer();
+    } else {
+        startLiveRefreshTimer();
+        // Catch up immediately in case tiles finished downloading while the
+        // tab was in the background, rather than waiting up to a minute.
+        refreshLiveMap();
+    }
+});
+
+// ─── Weeks ────────────────────────────────────────────────────────────────────
+// Ordered newest → oldest, 'current' first. Used by stepWeek() for the
+// ArrowUp/ArrowDown keyboard shortcut.
+let weekOrder = ['current'];
+
+function setActiveWeek(week) {
+    activeWeek = week === 'current' ? null : week;
+    const weekKey = activeWeek || 'current';
+
+    // Tiles and /map images are cached per week (tileKey/mapImageCache), so
+    // switching weeks doesn't need to clear anything. If we've already
+    // visited this week, show it immediately — no flicker, no reload —
+    // which is what makes it possible to flip quickly between weeks to spot
+    // differences. render() + renderTileMode() will fetch anything missing.
+    if (mapImageCache.has(weekKey)) {
+        applyMapImage(weekKey, mapImageCache.get(weekKey));
+    } else {
+        mapImage = null; mapImageWeek = null; mapSampleCtx = null;
+    }
+
+    document.querySelectorAll('.week-item').forEach(el =>
+        el.classList.toggle('active', el.dataset.week === week));
+    scheduleRender();
+}
+
+// dir = -1 → newer (ArrowUp), dir = +1 → older (ArrowDown)
+function stepWeek(dir) {
+    if (weekOrder.length <= 1) return;
+    const currentKey = activeWeek || 'current';
+    let idx = weekOrder.indexOf(currentKey);
+    if (idx === -1) idx = 0;
+    idx = Math.max(0, Math.min(weekOrder.length - 1, idx + dir));
+    const target = weekOrder[idx];
+    if (target !== currentKey) setActiveWeek(target);
+}
+
+function buildWeekList(weeks) {
+    const list = document.getElementById('weekList');
+    list.innerHTML = '';
+
+    const cur = document.createElement('div');
+    cur.className = 'week-item active'; cur.dataset.week = 'current';
+    cur.innerHTML = '<span>⟳ Текущая</span><div class="week-dot"></div>';
+    cur.onclick = () => setActiveWeek('current');
+    list.appendChild(cur);
+
+    // /weeks returns all weeks including the current one.
+    // Determine current week key so we can exclude it.
+    // Week keys are ISO strings like "26W26"; the largest one is the current week.
+    const sorted = [...weeks].sort((a, b) => b.localeCompare(a)); // descending
+    const currentWeekKey = sorted[0]; // newest = current week
+    const archiveWeeks   = sorted.slice(1); // everything older
+
+    for (const w of archiveWeeks) {
+        const item = document.createElement('div');
+        item.className = 'week-item'; item.dataset.week = w;
+        item.innerHTML = `<span>${w}</span><div class="week-dot"></div>`;
+        item.onclick = () => setActiveWeek(w);
+        list.appendChild(item);
+    }
+
+    weekOrder = ['current', ...archiveWeeks];
+}
+
+function detectArchiveWeeks() {
+    fetch('/weeks')
+        .then(r => r.ok ? r.json() : [])
+        .then(weeks => buildWeekList(Array.isArray(weeks) ? weeks : []))
+        .catch(() => buildWeekList([]));
+}
+
+// ─── UI helpers ───────────────────────────────────────────────────────────────
+
+
+function showNotif(msg, type = '') {
+    const el = document.getElementById('notif');
+    el.textContent = msg;
+    el.className = 'notif show' + (type ? ' ' + type : '');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+    setTimeout(resizeCanvases, 220);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+// Set up tools and zoom BEFORE the first render so resizeCanvases()
+// sees the correct initial state and does not trigger spurious tile loads.
+setTool('pan');
+updateZoomUI();   // sync slider/label with ZOOM_INITIAL without triggering render
+
+// Size the canvases. This calls scheduleRender() which will fire on the next
+// animation frame — at that point zoom=ZOOM_INITIAL=0.25 < TILE_SWITCH_THRESHOLD
+// so we go into map-mode and call loadMapImage() exactly once.
+resizeCanvases();
+
+// Kick off /map download. loadMapImage sets mapImageLoading=true immediately,
+// so the render() call already scheduled by resizeCanvases() will not start a
+// second download (the !mapImageLoading guard in render() will be false).
+loadMapImage('current');
+
+detectArchiveWeeks();
+
+if (!document.hidden) startLiveRefreshTimer();
+</script>
+</body>
+</html>

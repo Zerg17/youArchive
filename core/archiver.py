@@ -105,6 +105,11 @@ class Archiver:
                 found = self.tile_manager.load_from_db(current)
                 if found:
                     self.downloader.set_current_week(current)
+                # Load the week before this one (if any) as the reference
+                # map for NEW/GONE determination on further downloads.
+                prior_weeks = sorted(w for w in existing_weeks if w < current)
+                if prior_weeks:
+                    self.tile_manager.load_prev_map(prior_weeks[-1])
                 await self._queue_historical_tiles(current)
                 return
 
@@ -116,9 +121,11 @@ class Archiver:
                 logger.info(f"Loading old week {latest_old} for finalization")
                 found = self.tile_manager.load_from_db(latest_old)
                 if found:
-                    # Seal: yellow preserved in archive, empty stripped.
+                    # Seal: yellow/malinovy/red preserved in archive, empty stripped.
                     self.tile_manager.save_to_db(latest_old, archive=True)
                     logger.info(f"Finalized archive for week {latest_old}")
+                    # Reference map for this week's NEW/GONE determination.
+                    self.tile_manager.load_prev_map(latest_old)
 
             # Reset to empty BEFORE saving the new-week snapshot so the DB
             # record is a clean blank, not a copy of the old week.
@@ -158,10 +165,15 @@ class Archiver:
         logger.info(f"Week changed: {self.current_week} -> {new_week}")
         old_week = self.current_week
 
-        # 1. Seal the old week: keep yellow to record change history,
-        #    strip empty-tile noise.
+        # 1. Seal the old week: keep yellow/malinovy/red to record change
+        #    history, strip empty-tile noise.
         self.tile_manager.save_to_db(old_week, archive=True)
         logger.info(f"Sealed archive for week {old_week}")
+
+        # 1b. Keep the just-sealed week as the reference map so tiles
+        #     downloaded during the new week can be classified as
+        #     NEW/changed/GONE relative to it.
+        self.tile_manager.load_prev_map(old_week)
 
         # 2. Reset in-memory map to empty so:
         #    a) the new-week DB snapshot is genuinely blank, and

@@ -632,6 +632,10 @@ function tileIsSkippable(tx, ty) {
         const d = mapSampleCtx.getImageData(tx, ty, 1, 1).data;
         if (d[0]===128 && d[1]===128 && d[2]===128) return true; // UNLOADED gray
         if (d[0]===0   && d[1]===0   && d[2]===0  ) return true; // EMPTY black
+        if (d[0]===211 && d[1]===47  && d[2]===47 ) return true; // GONE red — was
+                                                                   // here, confirmed
+                                                                   // gone; nothing
+                                                                   // to fetch
     } catch(e) {}
     return false;
 }

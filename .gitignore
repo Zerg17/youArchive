@@ -3,9 +3,10 @@
 !*.*
 
 .*
+__pycache__
 data/*
 data
-__pycache__
+scripts
 
 !.gitignore
 

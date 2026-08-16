@@ -20,6 +20,30 @@ from database.db import get_connection
 logger = logging.getLogger(__name__)
 
 
+def _write_gone_tombstone(x: int, y: int, week: str):
+    """
+    Record a tile's disappearance directly in `tiles` as an empty row
+    (image=b'', checksum='') — a "tombstone". Once this exists, any read
+    path that already falls back to "most recent row <= requested week"
+    will naturally return it, and an empty/falsy image is enough signal to
+    treat the tile as gone. No separate table, no need to consult the
+    week's map PNG at read time.
+
+    Only called once, exactly at the (x, y) transition where the tile was
+    filled last week and is confirmed empty this week — not on every empty
+    week thereafter (was_filled_last_week() already returns False for
+    subsequent weeks once the tombstone is the most recent row, so this
+    naturally doesn't get re-triggered).
+    """
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO tiles (x, y, week_key, image, checksum)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (x, y, week, b"", ""),
+    )
+    conn.commit()
+
+
 class TileDownloader:
     """
     Background tile downloader.
@@ -152,7 +176,10 @@ class TileDownloader:
 
                 elif response.status == 404:
                     logger.debug(f"Tile {x},{y} not found (404)")
-                    self.tile_manager.set_tile_empty(x, y)
+                    was_filled_prev = self.tile_manager.was_filled_last_week(x, y)
+                    self.tile_manager.set_tile_empty(x, y, was_filled_prev=was_filled_prev)
+                    if was_filled_prev and self._current_week:
+                        _write_gone_tombstone(x, y, self._current_week)
                     self._backoff = DOWNLOAD_INTERVAL
 
                 else:
@@ -189,14 +216,25 @@ class TileDownloader:
             logger.warning(f"Failed to process tile {x},{y}")
             return
 
-        is_empty, fill_pct, changed, neighbors = processed
+        is_empty, fill_pct, filled_pixels, changed, was_filled_prev, neighbors = processed
 
         if is_empty:
-            self.tile_manager.set_tile_empty(x, y)
-            logger.debug(f"Tile {x},{y} is empty")
+            self.tile_manager.set_tile_empty(x, y, was_filled_prev=was_filled_prev)
+            if was_filled_prev:
+                _write_gone_tombstone(x, y, week)
+            logger.debug(f"Tile {x},{y} is empty (gone:{was_filled_prev})")
         else:
-            self.tile_manager.set_tile_filled(x, y, fill_pct=fill_pct, changed=changed)
-            logger.info(f"Downloaded tile {x},{y} (fill:{fill_pct}% changed:{changed})")
+            if not was_filled_prev:
+                status = "new"
+            elif changed:
+                status = "changed"
+            else:
+                status = "unchanged"
+            self.tile_manager.set_tile_filled(x, y, fill_pct=fill_pct, status=status)
+            logger.info(
+                f"Downloaded tile {x},{y} (fill:{fill_pct}% / {filled_pixels}px "
+                f"status:{status})"
+            )
             # Queue neighbors so clusters are fully covered — back on main thread
             for nx, ny in neighbors:
                 self.add_to_list(nx, ny)
@@ -207,15 +245,18 @@ def _process_tile_sync(
 ) -> Optional[tuple]:
     """
     Synchronous tile processing — runs in a thread executor.
-    Returns (is_empty, fill_pct, changed, neighbor_list) or None on error.
+    Returns (is_empty, fill_pct, filled_pixels, changed, was_filled_prev,
+    neighbor_list) or None on error.
     """
     try:
         is_empty, img, checksum = check_tile_from_download(x, y, data)
     except Exception:
         return None
 
+    was_filled_prev = tile_manager.was_filled_last_week(x, y)
+
     if is_empty:
-        return (True, 0, False, [])
+        return (True, 0, 0, False, was_filled_prev, [])
 
     if img is None:
         return None
@@ -223,7 +264,8 @@ def _process_tile_sync(
     import numpy as np
 
     alpha_arr = np.array(img.convert("RGBA").getchannel("A"))
-    fill_pct = max(1, int(np.count_nonzero(alpha_arr)) * 100 // (TILE_SIZE * TILE_SIZE))
+    filled_pixels = int(np.count_nonzero(alpha_arr))
+    fill_pct = max(1, filled_pixels * 100 // (TILE_SIZE * TILE_SIZE))
 
     # Build neighbours first — always scan a 5×5 window around a found tile
     # so new content that appeared next to unchanged tiles is still discovered.
@@ -238,7 +280,14 @@ def _process_tile_sync(
 
     conn = get_connection()
 
-    # Changed relative to last known version?
+    # Changed relative to last known version? Note: if the tile just
+    # reappeared after being gone, `prev` here may be the empty tombstone
+    # row written by _write_gone_tombstone() — its checksum ('') will never
+    # match a real image's checksum, so this naturally reports changed=True
+    # and a fresh row gets inserted below. That's fine either way: the
+    # actual status shown on the map ("new" vs "changed") is decided by
+    # was_filled_prev in _process_tile_data, not by this flag, whenever the
+    # tile wasn't filled last week.
     changed = False
     prev_row = conn.execute(
         "SELECT week_key FROM tiles"
@@ -256,7 +305,7 @@ def _process_tile_sync(
         elif prev:
             # Same as previous week — no need to store a copy in the DB,
             # but neighbours are still needed to discover new content.
-            return (False, fill_pct, False, neighbors)
+            return (False, fill_pct, filled_pixels, False, was_filled_prev, neighbors)
 
     compressed = compress_tile(img)
     conn.execute(
@@ -266,4 +315,4 @@ def _process_tile_sync(
     )
     conn.commit()
 
-    return (False, fill_pct, changed, neighbors)
+    return (False, fill_pct, filled_pixels, changed, was_filled_prev, neighbors)

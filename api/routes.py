@@ -1,5 +1,4 @@
 import asyncio
-import io
 import logging
 import os
 import time
@@ -83,7 +82,7 @@ async def get_robots():
 
 @router.get("/tile/{x}/{y}")
 async def get_tile(x: int, y: int):
-    """Current tile. Returns 204 if not downloaded or empty."""
+    """Current tile. Returns 204 if not downloaded, empty, or gone."""
     if not (0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE):
         raise HTTPException(status_code=404, detail="Coordinates out of bounds")
     tm = tile_manager
@@ -97,15 +96,11 @@ async def get_tile(x: int, y: int):
                 " ORDER BY week_key DESC LIMIT 1",
                 (x, y, week),
             ).fetchone()
-            if row:
+            if row and row["image"]:
                 return Response(
                     content=row["image"],
                     media_type="image/png",
                     headers={
-                        # Current week's tiles can change as new downloads
-                        # land throughout the week — keep this short, in
-                        # line with the client's live-refresh interval, so
-                        # browsers/proxies don't serve a stale tile for long.
                         "Cache-Control": "public, max-age=60",
                         "ETag": f'"{row["checksum"]}"',
                     }
@@ -118,15 +113,18 @@ async def get_archive_tile(x: int, y: int, week: str):
     """
     Tile as it appeared during (or most recently before) a given week.
     Falls back to earlier weeks when the tile wasn't re-downloaded that week.
+    Returns 204 if the tile was never there, or its most recent state is the
+    empty tombstone row written when it disappeared.
     """
     if not (0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE):
         raise HTTPException(status_code=404, detail="Coordinates out of bounds")
+
     row = get_connection().execute(
         "SELECT image, checksum FROM tiles WHERE x=? AND y=? AND week_key<=?"
         " ORDER BY week_key DESC LIMIT 1",
         (x, y, week),
     ).fetchone()
-    if row:
+    if row and row["image"]:
         return Response(
             content=row["image"],
             media_type="image/png",

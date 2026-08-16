@@ -12,21 +12,34 @@ from config import MAP_SIZE
 from database.db import get_connection
 
 
-UNLOADED = 0   # gray  — never downloaded
-EMPTY    = 1   # black — downloaded but empty
-# 2..102  = green  (fill_pct 1-100%),  fill_green(pct)  = 2 + pct
-# 103..202 = yellow (changed, same),   fill_yellow(pct) = 102 + pct
+UNLOADED = 0     # gray    — never downloaded / not (yet) rescanned this week
+EMPTY    = 1     # black   — downloaded and confirmed empty (current week only;
+                 #           stripped to UNLOADED when a week is archived)
+# 2..102 = green   (filled, unchanged since last time seen — fill_pct 0-100%)
+YELLOW   = 103   # bright yellow — filled, content changed vs. previous version
+NEW      = 104   # malinovy      — filled this week, was NOT filled last week
+                 #                 (first appearance, or reappearance after
+                 #                 having disappeared)
+GONE     = 105   # red           — was filled last week, confirmed empty/gone
+                 #                 this week (a "disappeared" transition)
+
+# Values that represent "this tile currently has content" for the purposes of
+# week-over-week comparisons (used to decide NEW vs "still there" and to
+# decide GONE for the following week).
+FILLED_VALUES = frozenset([YELLOW, NEW]) | frozenset(range(2, 103))
+
 
 def fill_green(fill_pct: int) -> int:
     return 2 + min(max(fill_pct, 0), 100)
 
-def fill_yellow(fill_pct: int) -> int:
-    return 102 + min(max(fill_pct, 0), 100)
-
-
 
 GRAD_MIN = 40   # intensity at fill_pct = 1  (clearly visible vs black)
 GRAD_MAX = 230  # intensity at fill_pct = 100
+
+# malinovy (new) / red (gone) — moderate-contrast palette
+_COLOR_YELLOW = (255, 230, 0)   # bright, no gradient — must "jump out"
+_COLOR_NEW    = (219, 39, 119)  # malinovy — appeared this week
+_COLOR_GONE   = (211, 47, 47)   # red — disappeared this week
 
 _PALETTE_FLAT = np.zeros(256 * 3, dtype=np.uint8)
 _PALETTE_FLAT[0 * 3: 0 * 3 + 3] = [128, 128, 128]   # UNLOADED
@@ -35,10 +48,9 @@ for _v in range(2, 103):   # green pct 0..100
     _pct = _v - 2
     _g = 0 if _pct == 0 else GRAD_MIN + _pct * (GRAD_MAX - GRAD_MIN) // 100
     _PALETTE_FLAT[_v * 3: _v * 3 + 3] = [0, _g, 0]
-for _v in range(103, 203):  # yellow pct 1..100
-    _pct = _v - 102
-    _y = GRAD_MIN + _pct * (GRAD_MAX - GRAD_MIN) // 100
-    _PALETTE_FLAT[_v * 3: _v * 3 + 3] = [_y, _y, 0]
+_PALETTE_FLAT[YELLOW * 3: YELLOW * 3 + 3] = _COLOR_YELLOW
+_PALETTE_FLAT[NEW * 3: NEW * 3 + 3]       = _COLOR_NEW
+_PALETTE_FLAT[GONE * 3: GONE * 3 + 3]     = _COLOR_GONE
 
 
 def _map_to_palette_png(arr: np.ndarray, compress_level: int) -> bytes:
@@ -61,6 +73,11 @@ class TileManager:
         self.map: np.ndarray = np.zeros((MAP_SIZE, MAP_SIZE), dtype=np.uint8)
         self.week_key: Optional[str] = None
         self._downloaded: Set[Tuple[int, int]] = set()
+        # Read-only reference to the *previous* week's sealed map, used only
+        # to decide NEW vs "still there" / GONE for tiles downloaded this
+        # week. None means "no previous week known" — everything found this
+        # week is then treated as NEW.
+        self.prev_map: Optional[np.ndarray] = None
 
     def load_from_db(self, week_key: str) -> bool:
         """
@@ -95,8 +112,11 @@ class TileManager:
 
         archive=False: compress_level=1 — fast (live map / new-week snapshot).
         archive=True:  compress_level=7 — smaller (week being sealed).
-          Also strips EMPTY pixels (value=1 → 0) to remove scan noise.
-          Yellow (changed) pixels are kept so history shows when things changed.
+          Also strips EMPTY pixels (value=1 → 0) to remove scan noise, since
+          "black" is only meaningful while a week is still live/in-progress.
+          Yellow (changed), malinovy (new) and red (gone) pixels are all kept
+          so the archived history shows when things changed, appeared, or
+          disappeared.
         """
         arr = self.map
         if archive:
@@ -112,6 +132,42 @@ class TileManager:
         )
         conn.commit()
         self.week_key = week_key
+
+    def load_prev_map(self, week_key: str) -> bool:
+        """
+        Load a (typically just-sealed) week's map into self.prev_map, purely
+        as a read-only reference for this week's NEW/GONE determination.
+        Does NOT touch self.map or self.week_key.
+        Returns True if found, False if not (prev_map is set to None then).
+        """
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT image FROM maps WHERE week_key = ?", (week_key,)
+        ).fetchone()
+
+        if row is None:
+            self.prev_map = None
+            return False
+
+        img = Image.open(io.BytesIO(row["image"]))
+        if img.mode != "P":
+            self.prev_map = None
+            return False
+
+        self.prev_map = np.array(img, dtype=np.uint8)
+        return True
+
+    def was_filled_last_week(self, x: int, y: int) -> bool:
+        """
+        True if (x, y) held content at the end of the previous week, per
+        self.prev_map. If no previous week is known, everything counts as
+        "not filled last week" so newly found tiles are marked NEW.
+        """
+        if self.prev_map is None:
+            return False
+        if not (0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE):
+            return False
+        return int(self.prev_map[y, x]) in FILLED_VALUES
 
     def reset_to_empty(self):
         """
@@ -133,12 +189,29 @@ class TileManager:
             if value != UNLOADED:
                 self._downloaded.add((x, y))
 
-    def set_tile_filled(self, x: int, y: int, fill_pct: int, changed: bool = False):
-        value = fill_yellow(fill_pct) if changed else fill_green(fill_pct)
+    def set_tile_filled(self, x: int, y: int, fill_pct: int, status: str = "unchanged"):
+        """
+        status:
+          "unchanged" -> green gradient by fill_pct (default)
+          "changed"   -> flat bright yellow (content differs from what was
+                         there before, tile was present both weeks)
+          "new"       -> flat malinovy (tile was NOT present last week)
+        """
+        if status == "new":
+            value = NEW
+        elif status == "changed":
+            value = YELLOW
+        else:
+            value = fill_green(fill_pct)
         self.set_tile_status(x, y, value)
 
-    def set_tile_empty(self, x: int, y: int):
-        self.set_tile_status(x, y, EMPTY)
+    def set_tile_empty(self, x: int, y: int, was_filled_prev: bool = False):
+        """
+        was_filled_prev=True marks this as a GONE (red) transition — the tile
+        held content last week and is confirmed empty this week. Otherwise it
+        is a plain EMPTY (black) scan result.
+        """
+        self.set_tile_status(x, y, GONE if was_filled_prev else EMPTY)
 
     def is_downloaded(self, x: int, y: int) -> bool:
         return int(self.map[y, x]) != UNLOADED
@@ -204,8 +277,9 @@ class TileManager:
         return len(self._downloaded)
 
     def get_filled_count(self) -> int:
-        """Number of tiles that have non-empty content."""
-        return int(np.count_nonzero((self.map >= 2) & (self.map <= 202)))
+        """Number of tiles that currently have non-empty content
+        (green, yellow, or malinovy — NOT the red 'gone' marker)."""
+        return int(np.count_nonzero((self.map >= 2) & (self.map <= NEW)))
 
     def to_png_bytes(self, compress_level: int = 1) -> bytes:
         """Encode the current map as an 8-bit palette PNG."""
